@@ -1,0 +1,4 @@
+locust==2.46.6
+psycopg[binary]==3.3.6
+redis==8.1.0
+python-dotenv==1.2.3

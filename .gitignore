@@ -1,0 +1,7 @@
+.env
+.venv/
+.vscode/
+__pycache__/
+*.pyc
+# Reportes de Locust (--html, --csv)
+reportes/
