@@ -18,10 +18,12 @@ cobalto/
 ## Cómo está armado
 
 ```
-Droplet (Locust) ──HTTPS──► Nginx de jardin ──► gunicorn de torio (127.0.0.1:9500)
-                  directo, sin Cloudflare              │
-                                                       ├── PostgreSQL de pruebas
-                                                       └── Valkey de pruebas (throttling)
+                                 ┌─ jardin (146.190.254.20) ────────────────────┐
+Droplet (Locust) ──HTTPS──────►  │ Nginx ──► gunicorn de torio (127.0.0.1:9500) │
+                 directo, sin    │                │                             │
+                 Cloudflare      │                ├──► PostgreSQL de pruebas    │
+                                 └────────────────┼─────────────────────────────┘
+                                                  └──► Valkey de pruebas (cluster DO, throttling)
 ```
 
 - **Sin Cloudflare.** El droplet resuelve `reddocapi.uk` a la IP de jardin por
@@ -43,10 +45,16 @@ Droplet (Locust) ──HTTPS──► Nginx de jardin ──► gunicorn de tori
 
 1. **Crear** un droplet Ubuntu 24.04 en la **misma región** que jardin. Con 2 vCPU / 2 GB
    alcanza para varios cientos de requests por segundo.
-2. **Autorizarlo** en DigitalOcean: agregarlo a los *trusted sources* de la base de
-   pruebas (para `usuarios.py`) y del cluster Valkey de pruebas (para la limpieza del
-   throttling). Si jardin tiene un firewall que solo acepta Cloudflare, abrir también la
-   IP del droplet.
+2. **Autorizarlo:**
+   - **PostgreSQL de pruebas** (instalado en jardin, para `usuarios.py`): abrir el puerto 5432
+     a la IP del droplet en el firewall (`sudo ufw allow from <IP del droplet> to any port
+     5432`, o en el firewall de DigitalOcean) y agregar en `pg_hba.conf` una línea
+     `hostssl <base> <usuario> <IP del droplet>/32 scram-sha-256`; después
+     `sudo systemctl reload postgresql`.
+   - **Valkey de pruebas** (para la limpieza del throttling): agregar el droplet a los
+     *trusted sources* del cluster.
+   - Si jardin tiene un firewall que solo acepta Cloudflare, abrir también la IP del
+     droplet.
 3. **Apuntar el dominio a jardin**, directo:
 
    ```bash
@@ -64,8 +72,9 @@ Droplet (Locust) ──HTTPS──► Nginx de jardin ──► gunicorn de tori
    cp .env.example .env && nano .env      # llenar CARGA_CLAVE, DATABASE_URL, REDIS_URL
    ```
 
-   Para `DATABASE_URL` y `REDIS_URL` use las cadenas **públicas** de los clusters de
-   pruebas (*Connection details → Public network*): el droplet no está en su VPC.
+   `DATABASE_URL` apunta a la IP pública de jardin, donde está PostgreSQL. Para `REDIS_URL` use
+   la cadena **pública** del cluster Valkey (*Connection details → Public network*): el
+   droplet no está en su VPC.
 
 ## 2. Crear los usuarios de carga
 
@@ -116,7 +125,11 @@ locust -f escenarios/login.py --processes -1 --headless \
   porque no hay worker libre.
 - **Workers de gunicorn** (`htop`): con workers síncronos, cada worker atiende un request a
   la vez. Si todos están al 100% de CPU, ese es el techo.
-- **Métricas de DigitalOcean** de la base y de Valkey: CPU, conexiones y memoria.
+- **PostgreSQL** (`SELECT count(*) FROM pg_stat_activity`): conexiones abiertas. Corre en
+  jardin junto a gunicorn y compite con él por la CPU: en `htop` se ven los procesos
+  `postgres` al lado de los workers. En el login pesa poco (una lectura y la fila de
+  `seg_acceso`), pero en escenarios con más consultas puede ser lo primero que se sature.
+- **Métricas de DigitalOcean** de Valkey: CPU, conexiones y memoria.
 
 ## 5. Qué esperar del login
 
@@ -142,7 +155,9 @@ python usuarios.py borrar
 Borra los usuarios de carga, sus tokens, sus membresías y todas las filas de la bitácora
 de accesos de `@carga.test`. Después:
 
-- quite el droplet de los *trusted sources* de la base y de Valkey;
+- quite la regla del firewall y la línea de `pg_hba.conf` de jardin
+  (y `sudo systemctl reload postgresql`);
+- quite el droplet de los *trusted sources* de Valkey;
 - destruya el droplet.
 
 ## Agregar un escenario
