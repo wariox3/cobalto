@@ -10,7 +10,8 @@ cobalto/
 ├── usuarios.py           # crea / borra los usuarios de carga (SQL directo a la base de pruebas)
 ├── escenarios/
 │   ├── comun.py          # configuración del .env y limpieza del throttling
-│   └── login.py          # POST /seguridad/login/
+│   ├── login.py          # POST /seguridad/login/
+│   └── contenedor.py     # login + POST /contenedor/cliente/ simultáneos
 ├── requirements.txt
 └── .env.example
 ```
@@ -146,14 +147,40 @@ latencia sube porque los requests esperan turno.
 > `usuarios.py` guarda las claves en PBKDF2, pero con MD5 como hasher preferido torio las
 > reescribe a MD5 en el primer login de cada usuario.
 
-## 6. Limpiar
+## 6. Crear contenedores a la vez
+
+`escenarios/contenedor.py` hace que N usuarios inicien sesión, se esperen entre sí y
+manden `POST /contenedor/cliente/` al mismo tiempo. Después consulta
+`/contenedor/cliente/<id>/estado/` hasta `listo` o `error`, y borra el contenedor por la
+API (`CONTENEDOR_BORRAR=no` para dejarlo). Cada usuario hace una sola pasada y la prueba
+termina sola:
+
+```bash
+locust -f escenarios/contenedor.py --headless -u 5 -r 5 --html reportes/contenedor.html
+```
+
+- **Sin `--processes`**: la espera entre usuarios vive en un proceso.
+- **Un usuario de carga por usuario virtual**: torio admite un contenedor en creación por
+  usuario. `CARGA_USUARIOS` tiene que ser al menos `-u`.
+- **Throttling**: el escenario limpia `login` y `crear_contenedor` (5 por hora por
+  usuario) aunque no estén en `THROTTLE_A_LIMPIAR`.
+- **Qué esperar**: el POST responde 202 en milisegundos; lo lento lo hace la tarea
+  `crear_contenedor` en `torio-celery`, que tiene dos procesos. De cinco contenedores se
+  construyen dos a la vez y el resto espera en la cola, así que en
+  `CONTENEDOR creación hasta listo` el último tarda unas tres veces lo que el primero.
+  Mientras tanto, mire que el login y el resto de la API no se frenen (ver
+  `docs/creacion_contenedor.md` de torio).
+
+## 7. Limpiar
 
 ```bash
 python usuarios.py borrar
 ```
 
 Borra los usuarios de carga, sus tokens, sus membresías y todas las filas de la bitácora
-de accesos de `@carga.test`. Después:
+de accesos de `@carga.test`. Si alguno todavía tiene un contenedor (una corrida de
+`contenedor.py` que quedó a medias), no borra nada y los lista: bórrelos antes con
+`DELETE /contenedor/cliente/<id>/`. Después:
 
 - quite la regla del firewall y la línea de `pg_hba.conf` de jardin
   (y `sudo systemctl reload postgresql`);
@@ -165,6 +192,7 @@ de accesos de `@carga.test`. Después:
 Un archivo nuevo en `escenarios/` que importe de `comun` lo que necesite (`HOST`, `CLAVE`,
 `siguiente_email`…). Importar `comun` ya activa la limpieza del throttling; agregue los
 scopes que el escenario use a `THROTTLE_A_LIMPIAR` (por ejemplo `login,refresh,user`).
-Los endpoints de un contenedor necesitan el header `X-Tenant: <schema>`, y los usuarios
-de carga tendrían que ser miembros de ese contenedor, algo que `usuarios.py` todavía no
+Si el scope no va siempre, el escenario lo suma con `limpiar_tambien('<scope>')`. Los
+endpoints de un contenedor necesitan el header `X-Tenant: <schema>`, y los usuarios de
+carga tendrían que ser miembros de ese contenedor, algo que `usuarios.py` todavía no
 hace.

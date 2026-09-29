@@ -124,6 +124,24 @@ def borrar(conexion) -> None:
         ('usuarios', f"DELETE FROM public.seg_usuario WHERE email LIKE '%@{DOMINIO}'"),
     ]
     with conexion.transaction(), conexion.cursor() as cursor:
+        # Los contenedores que dejó escenarios/contenedor.py tienen su schema, y borrarlo
+        # le toca a torio (DELETE /contenedor/cliente/<id>/), no a este script.
+        cursor.execute(
+            f"""
+            SELECT c.id, c.schema_name, c.estado FROM public.ctn_cliente c
+            WHERE c.owner_id IN ({usuarios})
+               OR c.id IN (SELECT cliente_id FROM public.seg_usuario_cliente
+                           WHERE usuario_id IN ({usuarios}) AND cliente_id <> (
+                               SELECT id FROM public.ctn_cliente WHERE schema_name = 'public'))
+            """
+        )
+        contenedores = cursor.fetchall()
+        if contenedores:
+            lista = '\n'.join(f'  {id_}  {schema}  ({estado})' for id_, schema, estado in contenedores)
+            sys.exit(
+                f'Los usuarios de carga todavía tienen contenedores:\n{lista}\n'
+                'Bórrelos por la API (DELETE /contenedor/cliente/<id>/) y vuelva a correr esto.'
+            )
         for nombre, sql in sentencias:
             cursor.execute(sql)
             print(f'{cursor.rowcount:>6}  {nombre}')

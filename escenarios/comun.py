@@ -55,6 +55,13 @@ INTERVALO = float(os.getenv('THROTTLE_INTERVALO', '0.2'))
 _limpiador = None
 
 
+def limpiar_tambien(*scopes: str) -> None:
+    """Suma a THROTTLE_A_LIMPIAR los scopes que el escenario necesita, sin tocar el .env."""
+    for scope in scopes:
+        if scope not in SCOPES:
+            SCOPES.append(scope)
+
+
 def _limpiar_throttling(cliente) -> None:
     patrones = [f'*:1:throttle_{scope}_*' for scope in SCOPES]
     while True:
