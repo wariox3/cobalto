@@ -43,9 +43,10 @@ def siguiente_email() -> str:
 # contadores de los scopes de THROTTLE_A_LIMPIAR. Cada request sigue pagando su consulta a
 # Valkey (la medición la incluye); solo se evita que el contador llegue al límite.
 #
-# Las claves las arma torio así: `<schema>::1:throttle_<scope>_<ip o id de usuario>`
-# (KEY_FUNCTION de django-tenants + ScopedRateThrottle de DRF). Si eso cambia en torio,
-# esto deja de borrar y la prueba empieza a dar 429.
+# Las claves las arma torio así: `<schema>:<KEY_PREFIX>:1:throttle_<scope>_<ip o id de
+# usuario>` (KEY_FUNCTION de django-tenants + ScopedRateThrottle de DRF), por ejemplo
+# `public:torio:1:throttle_login_203.0.113.7`. El patrón sirve con o sin KEY_PREFIX. Si
+# eso cambia en torio, esto deja de borrar y la prueba empieza a dar 429.
 
 REDIS_URL = os.getenv('REDIS_URL', '')
 SCOPES = [s.strip() for s in os.getenv('THROTTLE_A_LIMPIAR', 'login').split(',') if s.strip()]
@@ -55,7 +56,7 @@ _limpiador = None
 
 
 def _limpiar_throttling(cliente) -> None:
-    patrones = [f'*::1:throttle_{scope}_*' for scope in SCOPES]
+    patrones = [f'*:1:throttle_{scope}_*' for scope in SCOPES]
     while True:
         try:
             for patron in patrones:
